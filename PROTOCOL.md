@@ -15,10 +15,10 @@ for matches between strangers who might cheat.
 | `{t:'hello', v:1, name, agent}` | Display name (16 chars, letters/digits/space/.-) and agent (`Phoenix` or `Clay`). |
 | `{t:'queue', code?}` | Join the public queue, or wait for the player who sends the same room code (up to 8 letters/digits). |
 | `{t:'leave'}` | Leave the queue or end the current match (the opponent gets `end` with reason `left`). |
-| `{t:'s', c, x, y, z, vx, vy, vz, yw, p, cr, g, a, hp, ar, w, n, ag}` | Own state, about 30 per second, forwarded as sent. `c` sender clock (s), position (m), velocity (m/s), yaw / pitch (rad), crouch 0-1, grounded, alive, health, armor, weapon, shot counter, agent. |
+| `{t:'s', c, x, y, z, vx, vy, vz, yw, p, cr, g, a, hp, ar, w, n, tr, ag}` | Own state, about 30 per second, forwarded as sent. `c` sender clock (s), position (m), velocity (m/s), yaw / pitch (rad), crouch 0-1, grounded, alive, health, armor, weapon, shot counter, fire held, agent. |
 | `{t:'hit', dmg, region, w}` | Own shot or knife hit on the opponent. `dmg` 0-1000; `region` `head` / `body` / `legs`. |
 | `{t:'dead', by}` | Own death. `by: 'foe'` scores a kill for the opponent; `'self'` (falls, kill volumes) does not. |
-| `{t:'ev', ...}` | Reserved for ability events (forwarded as sent). |
+| `{t:'ev', c, k, ...}` | Ability input or actor command, forwarded as sent; `c` is the sender clock. See below. |
 | `{t:'ping', c}` | Answered with `{t:'pong', c, s}`. |
 
 ## Server to client
@@ -34,7 +34,26 @@ for matches between strangers who might cheat.
 | `{t:'end', reason, winner, you, foe}` | `score` (first to `firstTo`), `left`, `disconnect` or `server-restart`. |
 | `{t:'error', code}` | `protocol` when the client speaks another version. |
 
+## Abilities (`ev`)
+
+The range replays each player's abilities on the opponent's screen with a second copy of the same decoded controller
+(Phoenix or Raze), fed these inputs at the sender-clock time the opponent's body is drawn at. That copy's only target is
+the receiving player, so ability damage, burns, Blast Pack knockback and the Curveball blind are decided by the player
+they land on. The state message's `tr` (fire held) bends Blaze.
+
+| `k` | Fields | Input |
+|---|---|---|
+| `equip` | `kind`, `on` | Equip an ability (`on`) or put it away |
+| `cast` | `kind`, `o`, `f`, `r`, `sec` | Throw / fire: origin, forward and right vectors (m), alternate fire |
+| `cancel` | | Cancel the held ability or finish a Blaze |
+| `ult` | `o`, `yaw`, `pitch` | Run It Back (origin, view) / Showstopper equip |
+| `return` | `death` | Run It Back returning because the player died |
+| `detonate` | `id` | Detonate the Blast Pack with that id |
+| `reset` | | Practice reset (clears the player's abilities) |
+| `destroy` | `what`, `id` | You shot down the receiver's `bot` or `satchel` on your screen: end theirs |
+
 ## Limits
 
 4 KB per message, 150 messages per second per socket (sockets that keep flooding are closed with 1008),
-200 sockets, a ping every 15 s (a socket that misses a pong is dropped).
+200 sockets, a ping every 15 s (a socket that misses a pong is dropped). A waiting player who has sent nothing for 6 s
+(clients ping every 2 s) is skipped by matchmaking, so a tab closed while queued is never matched.

@@ -87,3 +87,14 @@ test('a flooding socket is throttled and eventually closed',async()=>{
     assert.ok(b.inbox.filter(m=>m.t==='s').length<=150+50,'at most a bucket of state got through');
   }finally{await r.close();}
 });
+
+test('a queued player who went silent is never matched; the newcomer waits instead',async()=>{
+  const r=await relay({staleMs:300});
+  try{
+    const a=client(r.port),b=client(r.port);await Promise.all([a.opened,b.opened]);
+    a.send({t:'queue'});await a.next('queued');
+    await new Promise(resolve=>setTimeout(resolve,400));   // a sends nothing (a closed tab whose socket lingers)
+    b.send({t:'queue'});assert.equal((await b.next('queued')).position,1);
+    assert.equal(a.inbox.some(m=>m.t==='match')||b.inbox.some(m=>m.t==='match'),false);
+  }finally{await r.close();}
+});

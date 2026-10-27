@@ -11,13 +11,16 @@ export const PROTOCOL=1;
 const RATE=150;           // messages per second per socket (token bucket size and refill)
 const HEARTBEAT_MS=15000; // ping interval; a socket that misses one pong is dropped
 
-export function createRelay({port=Number(process.env.PORT||8787),firstTo=Number(process.env.FIRST_TO||5),maxClients=Number(process.env.MAX_CLIENTS||200),
+export function createRelay({port=Number(process.env.PORT||8787),staleMs=6000,firstTo=Number(process.env.FIRST_TO||5),maxClients=Number(process.env.MAX_CLIENTS||200),
   origins=(process.env.ALLOWED_ORIGINS||'https://phoenix-ascent-arena.vercel.app').split(',').map(s=>s.trim()).filter(Boolean),log=console.log}={}){
   const clients=new Set(),publicQueue=[],privateQueue=new Map(),rooms=new Map();let nextId=1,matches=0;
   // Browsers send Origin: only the deployed site and local development pages may connect.
   const allowedOrigin=origin=>{try{const u=new URL(origin);return u.hostname==='localhost'||u.hostname==='127.0.0.1'||origins.includes(u.origin);}catch{return false;}};
   const send=(c,msg)=>{if(c.ws.readyState===1)c.ws.send(typeof msg==='string'?msg:JSON.stringify(msg));};
   const foeOf=c=>c.room?.players.find(p=>p!==c)||null;
+  // A closed tab can leave its socket open here until the heartbeat notices; never pair a player with one (staleMs:
+  // clients ping every 2 s, so a waiting player silent for 6 s is gone).
+  const live=c=>c.ws.readyState===1&&Date.now()-c.lastSeen<staleMs;
   const stats=()=>({service:'phoenix-arena-relay',protocol:PROTOCOL,online:clients.size,queued:publicQueue.length+privateQueue.size,rooms:rooms.size,matches,firstTo});
 
   function dequeue(c){
@@ -44,6 +47,7 @@ export function createRelay({port=Number(process.env.PORT||8787),firstTo=Number(
   }
   const finite=v=>typeof v==='number'&&Number.isFinite(v);
   function onMessage(c,data,isBinary){
+    c.lastSeen=Date.now();
     if(isBinary||!take(c))return;
     let m;try{m=JSON.parse(data);}catch{return;}
     if(!m||typeof m.t!=='string')return;
@@ -57,10 +61,10 @@ export function createRelay({port=Number(process.env.PORT||8787),firstTo=Number(
         const code=typeof m.code==='string'?m.code.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,8):'';
         if(code){
           const other=privateQueue.get(code);
-          if(other&&other!==c&&other.ws.readyState===1){privateQueue.delete(code);other.code=null;startMatch(other,c);}
+          if(other&&other!==c&&live(other)){privateQueue.delete(code);other.code=null;startMatch(other,c);}
           else{privateQueue.set(code,c);c.code=code;send(c,{t:'queued',code});}
         }else{
-          let other;while((other=publicQueue.shift())&&other.ws.readyState!==1);
+          let other;while((other=publicQueue.shift())&&!live(other));
           if(other)startMatch(other,c);else{publicQueue.push(c);send(c,{t:'queued',position:publicQueue.length});}
         }
         return;
@@ -94,7 +98,7 @@ export function createRelay({port=Number(process.env.PORT||8787),firstTo=Number(
 
   const wss=new WebSocketServer({noServer:true,maxPayload:4096,perMessageDeflate:false});
   wss.on('connection',ws=>{
-    const c={ws,id:nextId++,name:null,agent:'Phoenix',room:null,code:null,tokens:RATE,last:Date.now(),drops:0,alive:true};
+    const c={ws,id:nextId++,name:null,agent:'Phoenix',room:null,code:null,tokens:RATE,last:Date.now(),lastSeen:Date.now(),drops:0,alive:true};
     clients.add(c);
     ws.on('pong',()=>{c.alive=true;});
     ws.on('message',(data,isBinary)=>onMessage(c,data,isBinary));
