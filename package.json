@@ -1,0 +1,18 @@
+{
+  "name": "phoenix-arena-relay",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Matchmaking and message relay for the Phoenix / Ascent browser range 1v1 battle mode.",
+  "type": "module",
+  "main": "server.mjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "ws": "8.21.0"
+  }
+}
