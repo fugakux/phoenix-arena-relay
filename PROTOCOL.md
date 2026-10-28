@@ -16,7 +16,7 @@ for matches between strangers who might cheat.
 | `{t:'queue', code?, name?, agent?, skin?}` | Join the public queue, or wait for the player who sends the same room code (up to 8 letters/digits). Name, agent and skin replace the hello values, so the opponent is told the agent actually played. |
 | `{t:'leave'}` | Leave the queue or end the current match (the opponent gets `end` with reason `left`). |
 | `{t:'s', c, x, y, z, vx, vy, vz, yw, p, cr, g, a, hp, ar, w, n, tr, ag}` | Own state, about 30 per second, forwarded as sent. `c` sender clock (s), position (m), velocity (m/s), yaw / pitch (rad), crouch 0-1, grounded, alive, health, armor, weapon, shot counter, fire held, agent, `pg` own ping (ms, for the scoreboard). |
-| `{t:'hit', dmg, region, w}` | Own shot or knife hit on the opponent. `dmg` 0-1000; `region` `head` / `body` / `legs`. |
+| `{t:'hit', dmg, region, w, at?}` | Own shot or knife hit on the opponent. `dmg` 0-1000; `region` `head` / `body` / `legs`; `at` the opponent's state clock (`c`) the shooter was drawing, so the victim drops hits aimed at a life that already ended. |
 | `{t:'dead', by}` | Own death. `by: 'foe'` scores a kill for the opponent; `'self'` (falls, kill volumes) does not. |
 | `{t:'ev', c, k, ...}` | Ability input or actor command, forwarded as sent; `c` is the sender clock. See below. |
 | `{t:'ping', c}` | Answered with `{t:'pong', c, s}`. |

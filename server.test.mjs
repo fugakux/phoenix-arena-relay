@@ -48,6 +48,7 @@ test('state is relayed as sent; hits are validated; deaths score for the opponen
     const {a,b}=await pair(r.port);
     const state={t:'s',x:1.5,y:3,z:-4,yaw:.5,hp:100};a.send(state);assert.deepEqual(await b.next('s'),state);
     a.send({t:'hit',dmg:40,region:'head',w:'Vandal',extra:'dropped'});assert.deepEqual(await b.next('hit'),{t:'hit',dmg:40,region:'head',w:'Vandal'});
+    a.send({t:'hit',dmg:20,region:'body',w:'Vandal',at:12.5});assert.deepEqual(await b.next('hit'),{t:'hit',dmg:20,region:'body',w:'Vandal',at:12.5});
     a.send({t:'hit',dmg:-5});a.send({t:'hit',dmg:1e9});b.send({t:'dead',by:'foe'});
     assert.deepEqual(await a.next('kill'),{t:'kill'});
     const sa=await a.next('score'),sb=await b.next('score');

@@ -96,7 +96,8 @@ export function createRelay({port=Number(process.env.PORT||8787),staleMs=6000,fi
       }
       case 'hit':{
         const foe=foeOf(c);if(!foe||!finite(m.dmg)||m.dmg<=0||m.dmg>1000)return;
-        send(foe,{t:'hit',dmg:m.dmg,region:['head','body','legs'].includes(m.region)?m.region:'body',w:typeof m.w==='string'?m.w.slice(0,32):null});
+        // at: the victim's own state clock the shooter was drawing, so the victim can drop hits aimed at a life that ended.
+        send(foe,{t:'hit',dmg:m.dmg,region:['head','body','legs'].includes(m.region)?m.region:'body',w:typeof m.w==='string'?m.w.slice(0,32):null,...(finite(m.at)?{at:m.at}:{})});
         return;
       }
       case 'dead':{
