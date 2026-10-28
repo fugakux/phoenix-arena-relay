@@ -12,10 +12,10 @@ for matches between strangers who might cheat.
 
 | Message | Meaning |
 |---|---|
-| `{t:'hello', v:1, name, agent}` | Display name (16 chars, letters/digits/space/.-) and agent (`Phoenix` or `Clay`). |
-| `{t:'queue', code?}` | Join the public queue, or wait for the player who sends the same room code (up to 8 letters/digits). |
+| `{t:'hello', v:1, name, agent, skin?}` | Display name (16 chars, letters/digits/space/.-), agent (`Phoenix` or `Clay`) and Vandal skin (`standard` or a skin asset path). |
+| `{t:'queue', code?, name?, agent?, skin?}` | Join the public queue, or wait for the player who sends the same room code (up to 8 letters/digits). Name, agent and skin replace the hello values, so the opponent is told the agent actually played. |
 | `{t:'leave'}` | Leave the queue or end the current match (the opponent gets `end` with reason `left`). |
-| `{t:'s', c, x, y, z, vx, vy, vz, yw, p, cr, g, a, hp, ar, w, n, tr, ag}` | Own state, about 30 per second, forwarded as sent. `c` sender clock (s), position (m), velocity (m/s), yaw / pitch (rad), crouch 0-1, grounded, alive, health, armor, weapon, shot counter, fire held, agent. |
+| `{t:'s', c, x, y, z, vx, vy, vz, yw, p, cr, g, a, hp, ar, w, n, tr, ag}` | Own state, about 30 per second, forwarded as sent. `c` sender clock (s), position (m), velocity (m/s), yaw / pitch (rad), crouch 0-1, grounded, alive, health, armor, weapon, shot counter, fire held, agent, `pg` own ping (ms, for the scoreboard). |
 | `{t:'hit', dmg, region, w}` | Own shot or knife hit on the opponent. `dmg` 0-1000; `region` `head` / `body` / `legs`. |
 | `{t:'dead', by}` | Own death. `by: 'foe'` scores a kill for the opponent; `'self'` (falls, kill volumes) does not. |
 | `{t:'ev', c, k, ...}` | Ability input or actor command, forwarded as sent; `c` is the sender clock. See below. |
@@ -27,11 +27,11 @@ for matches between strangers who might cheat.
 |---|---|
 | `{t:'welcome', id, protocol, online}` | Connection accepted. |
 | `{t:'queued', position?, code?}` | Waiting in the public queue or for a room code. |
-| `{t:'match', room, side, foe:{id, name, agent}, firstTo, seed}` | Paired. `side` is `attack` for the first queued player, `defend` for the second. |
+| `{t:'match', room, side, you:{id, name, agent, skin}, foe:{id, name, agent, skin}, firstTo, timeLimit, seed}` | Paired. `side` is `attack` for the first queued player, `defend` for the second. `firstTo` kills (default 30) and `timeLimit` seconds (default 600). |
 | `{t:'s', ...}` / `{t:'hit', ...}` | The opponent's state / their hit on you. |
 | `{t:'kill'}` | Your opponent reported a death caused by you. |
-| `{t:'score', you, foe}` | Score after every death. |
-| `{t:'end', reason, winner, you, foe}` | `score` (first to `firstTo`), `left`, `disconnect` or `server-restart`. |
+| `{t:'score', you, foe, deaths:{you, foe}, left}` | Kills, deaths and seconds left after every death. |
+| `{t:'end', reason, winner, you, foe, deaths}` | `score` (first to `firstTo`), `time` (after `timeLimit`; the higher score wins, `winner` null on a tie), `left`, `disconnect` or `server-restart`. |
 | `{t:'error', code}` | `protocol` when the client speaks another version. |
 
 ## Abilities (`ev`)

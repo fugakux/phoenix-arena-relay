@@ -24,7 +24,8 @@ test('two queued players are matched on opposite sides and see each other',async
   try{
     const {ma,mb}=await pair(r.port);
     assert.equal(ma.room,mb.room);assert.deepEqual([ma.side,mb.side],['attack','defend']);
-    assert.equal(ma.foe.name,'Bravo');assert.equal(ma.foe.agent,'Clay');assert.equal(mb.foe.name,'Alpha');assert.equal(ma.firstTo,5);
+    assert.equal(ma.foe.name,'Bravo');assert.equal(ma.foe.agent,'Clay');assert.equal(mb.foe.name,'Alpha');assert.equal(ma.firstTo,30);assert.equal(ma.timeLimit,600);
+    assert.equal(ma.you.agent,'Phoenix');assert.equal(ma.foe.skin,'standard');
     assert.equal(r.stats().rooms,1);
   }finally{await r.close();}
 });
@@ -49,11 +50,12 @@ test('state is relayed as sent; hits are validated; deaths score for the opponen
     a.send({t:'hit',dmg:40,region:'head',w:'Vandal',extra:'dropped'});assert.deepEqual(await b.next('hit'),{t:'hit',dmg:40,region:'head',w:'Vandal'});
     a.send({t:'hit',dmg:-5});a.send({t:'hit',dmg:1e9});b.send({t:'dead',by:'foe'});
     assert.deepEqual(await a.next('kill'),{t:'kill'});
-    assert.deepEqual(await a.next('score'),{t:'score',you:1,foe:0});assert.deepEqual(await b.next('score'),{t:'score',you:0,foe:1});
+    const sa=await a.next('score'),sb=await b.next('score');
+    assert.deepEqual([sa.you,sa.foe,sa.deaths],[1,0,{you:0,foe:1}]);assert.deepEqual([sb.you,sb.foe,sb.deaths],[0,1,{you:1,foe:0}]);assert.ok(sa.left>590&&sa.left<=600);
     assert.equal(b.inbox.some(m=>m.t==='hit'),false,'out-of-range hits are not relayed');
-    b.send({t:'dead',by:'self'});assert.deepEqual(await a.next('score'),{t:'score',you:1,foe:0});
+    b.send({t:'dead',by:'self'});const self=await a.next('score');assert.deepEqual([self.you,self.foe,self.deaths.foe],[1,0,2]);
     b.send({t:'dead',by:'foe'});
-    const end=await a.next('end');assert.equal(end.reason,'score');assert.equal(end.you,2);
+    const end=await a.next('end');assert.equal(end.reason,'score');assert.equal(end.you,2);assert.deepEqual(end.deaths,{you:0,foe:3});
     assert.equal((await b.next('end')).foe,2);assert.equal(r.stats().rooms,0);
   }finally{await r.close();}
 });
@@ -96,5 +98,29 @@ test('a queued player who went silent is never matched; the newcomer waits inste
     await new Promise(resolve=>setTimeout(resolve,400));   // a sends nothing (a closed tab whose socket lingers)
     b.send({t:'queue'});assert.equal((await b.next('queued')).position,1);
     assert.equal(a.inbox.some(m=>m.t==='match')||b.inbox.some(m=>m.t==='match'),false);
+  }finally{await r.close();}
+});
+
+test('the queue request carries the agent and skin the player actually plays',async()=>{
+  const r=await relay();
+  try{
+    const a=client(r.port),b=client(r.port);await Promise.all([a.opened,b.opened]);
+    a.send({t:'hello',v:PROTOCOL,name:'Alpha',agent:'Phoenix'});b.send({t:'hello',v:PROTOCOL,name:'Bravo',agent:'Phoenix'});
+    // Alpha switched to Raze and a skin after connecting; the queue request says so.
+    a.send({t:'queue',agent:'Clay',skin:'/Game/Equippables/Guns/Rifles/AK/Dragon/AK_Dragon_PrimaryAsset',name:'Alpha2'});await a.next('queued');
+    b.send({t:'queue',agent:'Bogus'});
+    const [ma,mb]=await Promise.all([a.next('match'),b.next('match')]);
+    assert.equal(mb.foe.agent,'Clay');assert.equal(mb.foe.name,'Alpha2');assert.equal(mb.foe.skin,'/Game/Equippables/Guns/Rifles/AK/Dragon/AK_Dragon_PrimaryAsset');
+    assert.equal(ma.foe.agent,'Phoenix','an unknown agent keeps the last valid one');assert.equal(ma.you.agent,'Clay');
+  }finally{await r.close();}
+});
+
+test('the match ends when time runs out: higher score wins, a tie is a draw',async()=>{
+  const r=await relay({timeLimit:.3});
+  try{
+    const {a,b}=await pair(r.port);b.send({t:'dead',by:'foe'});await a.next('score');
+    const end=await a.next('end');assert.equal(end.reason,'time');assert.equal(end.you,1);assert.notEqual(end.winner,null);
+    assert.equal((await b.next('end')).winner,end.winner);
+    const second=await pair(r.port,'TIE');const tie=await second.a.next('end');assert.equal(tie.reason,'time');assert.equal(tie.winner,null);
   }finally{await r.close();}
 });

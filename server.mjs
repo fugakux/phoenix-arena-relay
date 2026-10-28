@@ -1,7 +1,8 @@
 // Phoenix Arena relay: matchmaking and message relay for the browser range's 1v1 battle mode.
 // Clients are trusted (each simulates its own movement and shooting and reports its own hits and deaths, see
 // PROTOCOL.md); the server pairs two players (public queue or a shared room code), relays their messages, keeps the
-// kill score and ends the match at FIRST_TO kills. No game state is simulated here, so a free instance is plenty.
+// kills and deaths and ends the match at FIRST_TO kills (default 30) or after TIME_LIMIT seconds (default 600; the
+// higher score wins, equal scores draw), like VALORANT's Deathmatch. No game state is simulated, so a free instance is plenty.
 import http from 'node:http';
 import {randomBytes} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
@@ -11,7 +12,7 @@ export const PROTOCOL=1;
 const RATE=150;           // messages per second per socket (token bucket size and refill)
 const HEARTBEAT_MS=15000; // ping interval; a socket that misses one pong is dropped
 
-export function createRelay({port=Number(process.env.PORT||8787),staleMs=6000,firstTo=Number(process.env.FIRST_TO||5),maxClients=Number(process.env.MAX_CLIENTS||200),
+export function createRelay({port=Number(process.env.PORT||8787),staleMs=6000,firstTo=Number(process.env.FIRST_TO||30),timeLimit=Number(process.env.TIME_LIMIT||600),maxClients=Number(process.env.MAX_CLIENTS||200),
   origins=(process.env.ALLOWED_ORIGINS||'https://phoenix-ascent-arena.vercel.app').split(',').map(s=>s.trim()).filter(Boolean),log=console.log}={}){
   const clients=new Set(),publicQueue=[],privateQueue=new Map(),rooms=new Map();let nextId=1,matches=0;
   // Browsers send Origin: only the deployed site and local development pages may connect.
@@ -21,7 +22,18 @@ export function createRelay({port=Number(process.env.PORT||8787),staleMs=6000,fi
   // A closed tab can leave its socket open here until the heartbeat notices; never pair a player with one (staleMs:
   // clients ping every 2 s, so a waiting player silent for 6 s is gone).
   const live=c=>c.ws.readyState===1&&Date.now()-c.lastSeen<staleMs;
-  const stats=()=>({service:'phoenix-arena-relay',protocol:PROTOCOL,online:clients.size,queued:publicQueue.length+privateQueue.size,rooms:rooms.size,matches,firstTo});
+  const stats=()=>({service:'phoenix-arena-relay',protocol:PROTOCOL,online:clients.size,queued:publicQueue.length+privateQueue.size,rooms:rooms.size,matches,firstTo,timeLimit});
+  // Name, agent and Vandal skin come with hello and again with every queue request, so a player who switched agent
+  // after connecting is announced to the next opponent with the agent they actually play.
+  const AGENTS=['Phoenix','Clay'];
+  function identify(c,m){
+    if(typeof m.name==='string')c.name=m.name.replace(/[^\w .-]/g,'').trim().slice(0,16)||c.name||'Player '+c.id;
+    if(AGENTS.includes(m.agent))c.agent=m.agent;
+    if(typeof m.skin==='string')c.skin=m.skin.replace(/[^\w./-]/g,'').slice(0,120)||'standard';
+  }
+  const secondsLeft=room=>Math.max(0,Math.round((room.endsAt-Date.now())/1000));
+  const scoreFor=(room,p)=>{const foe=room.players.find(x=>x!==p);
+    return {t:'score',you:room.score.get(p),foe:room.score.get(foe),deaths:{you:room.deaths.get(p),foe:room.deaths.get(foe)},left:secondsLeft(room)};};
 
   function dequeue(c){
     const i=publicQueue.indexOf(c);if(i>=0)publicQueue.splice(i,1);
@@ -29,15 +41,19 @@ export function createRelay({port=Number(process.env.PORT||8787),staleMs=6000,fi
     c.code=null;
   }
   function startMatch(a,b){
-    const room={id:randomBytes(4).toString('hex'),players:[a,b],score:new Map([[a,0],[b,0]]),ended:false,seed:randomBytes(4).readUInt32LE()};
+    const room={id:randomBytes(4).toString('hex'),players:[a,b],score:new Map([[a,0],[b,0]]),deaths:new Map([[a,0],[b,0]]),ended:false,
+      seed:randomBytes(4).readUInt32LE(),endsAt:Date.now()+timeLimit*1000};
+    // Out of time: the higher score wins, a tie is a draw (winner null).
+    room.timer=setTimeout(()=>{const [p,q]=room.players,sp=room.score.get(p),sq=room.score.get(q);endRoom(room,'time',sp===sq?null:sp>sq?p:q);},timeLimit*1000);
     rooms.set(room.id,room);matches++;
-    [a,b].forEach((c,i)=>{c.room=room;const foe=i?a:b;send(c,{t:'match',room:room.id,side:i?'defend':'attack',foe:{id:foe.id,name:foe.name,agent:foe.agent},firstTo,seed:room.seed});});
+    const who=c=>({id:c.id,name:c.name,agent:c.agent,skin:c.skin});
+    [a,b].forEach((c,i)=>{c.room=room;const foe=i?a:b;send(c,{t:'match',room:room.id,side:i?'defend':'attack',you:who(c),foe:who(foe),firstTo,timeLimit,seed:room.seed});});
     log(`match ${room.id} (${rooms.size} running)`);
   }
   function endRoom(room,reason,winner){
-    if(room.ended)return;room.ended=true;rooms.delete(room.id);
+    if(room.ended)return;room.ended=true;rooms.delete(room.id);clearTimeout(room.timer);
     for(const p of room.players){if(p.room!==room)continue;p.room=null;const foe=room.players.find(x=>x!==p);
-      send(p,{t:'end',reason,winner:winner?.id??null,you:room.score.get(p),foe:room.score.get(foe)});}
+      send(p,{t:'end',reason,winner:winner?.id??null,you:room.score.get(p),foe:room.score.get(foe),deaths:{you:room.deaths.get(p),foe:room.deaths.get(foe)}});}
     log(`end ${room.id} ${reason}`);
   }
   function take(c){
@@ -54,10 +70,11 @@ export function createRelay({port=Number(process.env.PORT||8787),staleMs=6000,fi
     switch(m.t){
       case 'hello':
         c.name=String(m.name??'').replace(/[^\w .-]/g,'').trim().slice(0,16)||'Player '+c.id;c.agent=m.agent==='Clay'?'Clay':'Phoenix';
+        identify(c,{skin:m.skin});
         if(m.v!==PROTOCOL)send(c,{t:'error',code:'protocol',want:PROTOCOL});
         return;
       case 'queue':{
-        if(c.room)return;dequeue(c);
+        if(c.room)return;dequeue(c);identify(c,m);
         const code=typeof m.code==='string'?m.code.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,8):'';
         if(code){
           const other=privateQueue.get(code);
@@ -85,8 +102,9 @@ export function createRelay({port=Number(process.env.PORT||8787),staleMs=6000,fi
       case 'dead':{
         // The victim reports its own death; a death by the opponent scores for the opponent.
         const room=c.room;if(!room)return;const foe=foeOf(c);
+        room.deaths.set(c,room.deaths.get(c)+1);
         if(m.by==='foe'&&foe){room.score.set(foe,room.score.get(foe)+1);send(foe,{t:'kill'});}
-        for(const p of room.players)send(p,{t:'score',you:room.score.get(p),foe:room.score.get(room.players.find(x=>x!==p))});
+        for(const p of room.players)send(p,scoreFor(room,p));
         if(foe&&room.score.get(foe)>=firstTo)endRoom(room,'score',foe);
         return;
       }
@@ -98,7 +116,7 @@ export function createRelay({port=Number(process.env.PORT||8787),staleMs=6000,fi
 
   const wss=new WebSocketServer({noServer:true,maxPayload:4096,perMessageDeflate:false});
   wss.on('connection',ws=>{
-    const c={ws,id:nextId++,name:null,agent:'Phoenix',room:null,code:null,tokens:RATE,last:Date.now(),lastSeen:Date.now(),drops:0,alive:true};
+    const c={ws,id:nextId++,name:null,agent:'Phoenix',skin:'standard',room:null,code:null,tokens:RATE,last:Date.now(),lastSeen:Date.now(),drops:0,alive:true};
     clients.add(c);
     ws.on('pong',()=>{c.alive=true;});
     ws.on('message',(data,isBinary)=>onMessage(c,data,isBinary));
